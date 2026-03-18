@@ -76,18 +76,103 @@ with tab_manual:
         "the outcome based on these inputs — just like a real application would."
     )
 
-    if len(feature_names) > 20:
-        st.info(
-            f"This model has {len(feature_names)} features. Showing them in a compact layout. "
-            "Adjust the ones you're interested in — the rest use default (median) values."
+    # ── Feature filter (only shown when there are many features) ──────
+    # Compute feature importance ranking if the model supports it
+    importance_ranking = None
+    if hasattr(model, "feature_importances_"):
+        importances = model.feature_importances_
+        importance_ranking = np.argsort(importances)[::-1]  # highest first
+    elif hasattr(model, "coef_"):
+        coefs = np.abs(model.coef_).ravel()
+        if len(coefs) == len(feature_names):
+            importance_ranking = np.argsort(coefs)[::-1]
+        elif model.coef_.ndim == 2:
+            avg_coefs = np.abs(model.coef_).mean(axis=0)
+            if len(avg_coefs) == len(feature_names):
+                importance_ranking = np.argsort(avg_coefs)[::-1]
+
+    total_features = len(feature_names)
+    show_features = feature_names  # default: show all
+
+    if total_features > 10:
+        st.subheader("Feature Filter")
+
+        with st.expander("Learn more: Why filter features?"):
+            st.write(
+                "When a model has many features, most of the prediction power often comes "
+                "from just a handful of them. Showing only the **most important features** "
+                "makes the input form manageable while still letting you see how your changes "
+                "affect the prediction. Features you don't adjust will use their default "
+                "(median) values from the training data."
+            )
+
+        filter_mode = st.radio(
+            "Which features to show?",
+            ["top_n", "manual", "all"],
+            format_func=lambda x: {
+                "top_n": f"Top N most important features (recommended)" if importance_ranking is not None
+                         else "Top N features (by variance)",
+                "manual": "Let me pick which features to show",
+                "all": f"Show all {total_features} features",
+            }[x],
+            help="Features not shown will be auto-filled with their median (default) values.",
         )
 
-    # Build input form
+        if filter_mode == "top_n":
+            max_show = min(total_features, 30)
+            default_n = min(10, total_features)
+            top_n = st.slider(
+                "How many features to show?",
+                min_value=3, max_value=max_show, value=default_n,
+                help="The most influential features will be shown. The rest use default values.",
+            )
+            if importance_ranking is not None:
+                top_indices = importance_ranking[:top_n]
+                show_features = [feature_names[i] for i in top_indices]
+                st.success(
+                    f"Showing the **top {top_n}** features ranked by model importance. "
+                    f"The remaining {total_features - top_n} features use default (median) values."
+                )
+            else:
+                # Fallback: rank by variance
+                variances = np.var(X_train, axis=0)
+                top_indices = np.argsort(variances)[::-1][:top_n]
+                show_features = [feature_names[i] for i in top_indices]
+                st.success(
+                    f"Showing the **top {top_n}** features ranked by variance. "
+                    f"The remaining {total_features - top_n} features use default (median) values."
+                )
+
+        elif filter_mode == "manual":
+            # Sort by importance if available for easier picking
+            if importance_ranking is not None:
+                sorted_names = [feature_names[i] for i in importance_ranking]
+            else:
+                sorted_names = feature_names
+
+            show_features = st.multiselect(
+                "Select features to adjust",
+                sorted_names,
+                default=sorted_names[:10],
+                help="Pick the features you want to manually set. Others use default values.",
+            )
+            if not show_features:
+                st.warning("Select at least one feature.")
+                show_features = feature_names[:5]
+
+            st.info(
+                f"Showing **{len(show_features)}** of {total_features} features. "
+                f"The remaining {total_features - len(show_features)} use default (median) values."
+            )
+
+        # else: all — show_features stays as feature_names
+
+    # ── Build input form ──────────────────────────────────────────────
     input_values = {}
-    n_cols = 3 if len(feature_names) > 6 else 2 if len(feature_names) > 3 else 1
+    n_cols = 3 if len(show_features) > 6 else 2 if len(show_features) > 3 else 1
     cols = st.columns(n_cols)
 
-    for i, fname in enumerate(feature_names):
+    for i, fname in enumerate(show_features):
         stats = feature_stats[fname]
         col = cols[i % n_cols]
         with col:
@@ -96,7 +181,6 @@ with tab_manual:
                 range_width = 1.0
 
             if stats["is_integer"] and range_width <= 100:
-                # Integer-like feature: use slider
                 input_values[fname] = st.slider(
                     fname,
                     min_value=int(stats["min"]),
@@ -105,7 +189,6 @@ with tab_manual:
                     key=f"manual_{fname}",
                 )
             elif stats["is_integer"] and stats["min"] >= 0 and stats["max"] <= 2:
-                # Binary-like: 0/1 toggle
                 input_values[fname] = st.selectbox(
                     fname,
                     [0, 1],
@@ -113,7 +196,6 @@ with tab_manual:
                     key=f"manual_{fname}",
                 )
             else:
-                # Continuous feature: number input
                 step = round(range_width / 100, 4) if range_width > 0 else 0.01
                 input_values[fname] = st.number_input(
                     fname,
@@ -123,6 +205,17 @@ with tab_manual:
                     step=float(step),
                     key=f"manual_{fname}",
                 )
+
+    # Fill hidden features with median defaults
+    for fname in feature_names:
+        if fname not in input_values:
+            input_values[fname] = feature_stats[fname]["median"]
+
+    if len(show_features) < total_features:
+        st.caption(
+            f"{total_features - len(show_features)} hidden features are set to their "
+            "median (default) values from the training data."
+        )
 
     # Predict button
     st.divider()
