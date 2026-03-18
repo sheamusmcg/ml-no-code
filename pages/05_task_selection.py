@@ -2,9 +2,11 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from components.state_manager import (
     is_data_loaded, get_working_data, clear_downstream, is_data_processed,
 )
+from components.preprocessing_utils import encode_categoricals, handle_missing_values
 
 # ── Prerequisite check ─────────────────────────────────────────────────────
 if not is_data_loaded():
@@ -185,26 +187,117 @@ if task_type == "classification":
         help="Ensures both training and test sets have the same class proportions as the full dataset.",
     )
 
+# ── Auto-handle non-numeric features ──────────────────────────────────────
+X_preview = df[features].copy()
+non_numeric = X_preview.select_dtypes(exclude=[np.number]).columns.tolist()
+
+if non_numeric:
+    st.header("Auto-Encode Categorical Features")
+    st.warning(
+        f"**{len(non_numeric)} categorical (text) column(s) detected** in your features. "
+        "ML models need numbers, not text. Choose how to convert them automatically."
+    )
+
+    with st.expander(f"Show categorical columns ({len(non_numeric)})"):
+        st.write(", ".join(non_numeric))
+
+    auto_encode = st.radio(
+        "How should we encode these columns?",
+        ["label", "onehot", "drop"],
+        format_func=lambda x: {
+            "label": "Label Encoding — assign a number to each category (fast, compact)",
+            "onehot": "One-Hot Encoding — create 0/1 columns per category (more accurate, more columns)",
+            "drop": "Drop them — remove all categorical columns",
+        }[x],
+        help="Label encoding is simpler but implies an order. One-hot encoding is more accurate but creates many columns.",
+    )
+
+    with st.expander("Learn more: Label vs One-Hot Encoding"):
+        st.write(
+            "**Label Encoding** converts each unique category to a number. For example, "
+            "'Red'=0, 'Blue'=1, 'Green'=2. This is fast and compact, but the model might "
+            "think Green(2) > Blue(1) > Red(0), which may not be meaningful.\n\n"
+            "**One-Hot Encoding** creates a new column for each unique category. For example, "
+            "'Color_Red', 'Color_Blue', 'Color_Green', each with 0 or 1. This avoids the "
+            "ordering problem but can create lots of columns with high-cardinality features.\n\n"
+            "**Drop** simply removes all text columns. Use this if the categorical columns "
+            "aren't useful for prediction."
+        )
+
+# ── Handle missing values automatically ───────────────────────────────────
+has_missing = df[features].isnull().sum().sum() > 0
+if has_missing:
+    missing_count = df[features].isnull().sum().sum()
+    missing_cols = df[features].isnull().sum()
+    missing_cols = missing_cols[missing_cols > 0]
+    st.header("Auto-Handle Missing Values")
+    st.warning(
+        f"**{missing_count:,} missing value(s)** found across {len(missing_cols)} column(s). "
+        "These will be handled automatically before training."
+    )
+    auto_missing = st.radio(
+        "How should we handle missing values?",
+        ["drop_rows", "fill_median_mode"],
+        format_func=lambda x: {
+            "drop_rows": "Drop rows with any missing values",
+            "fill_median_mode": "Fill with median (numbers) / mode (categories)",
+        }[x],
+        help="Dropping rows is simple but loses data. Filling preserves all rows.",
+    )
+
 # ── Perform Split ─────────────────────────────────────────────────────────
 if st.button("Prepare Data", type="primary"):
     try:
-        X = df[features].copy()
-        # Ensure all features are numeric for modeling
-        non_numeric = X.select_dtypes(exclude=[np.number]).columns.tolist()
-        if non_numeric:
-            st.error(
-                f"The following feature columns are not numeric: {', '.join(non_numeric)}. "
-                "Please go back to the Preprocess page and encode them."
-            )
+        work_df = df[features].copy()
+
+        # Step 1: Handle missing values
+        if has_missing:
+            if auto_missing == "drop_rows":
+                before = len(work_df)
+                work_df = work_df.dropna()
+                dropped = before - len(work_df)
+                st.info(f"Dropped {dropped:,} rows with missing values ({len(work_df):,} remaining).")
+                # Also drop from the full df to keep target aligned
+                df = df.loc[work_df.index]
+            else:
+                # Fill numeric with median, categorical with mode
+                for col in work_df.columns:
+                    if work_df[col].isnull().sum() > 0:
+                        if work_df[col].dtype in [np.float64, np.int64, float, int]:
+                            work_df[col] = work_df[col].fillna(work_df[col].median())
+                        else:
+                            mode_val = work_df[col].mode()
+                            fill_val = mode_val.iloc[0] if len(mode_val) > 0 else "Unknown"
+                            work_df[col] = work_df[col].fillna(fill_val)
+
+        # Step 2: Encode categoricals
+        current_non_numeric = work_df.select_dtypes(exclude=[np.number]).columns.tolist()
+        if current_non_numeric:
+            if auto_encode == "label":
+                for col in current_non_numeric:
+                    le_feat = LabelEncoder()
+                    work_df[col] = le_feat.fit_transform(work_df[col].astype(str))
+                st.info(f"Label-encoded {len(current_non_numeric)} categorical columns.")
+            elif auto_encode == "onehot":
+                before_cols = len(work_df.columns)
+                work_df = pd.get_dummies(work_df, columns=current_non_numeric, drop_first=True, dtype=int)
+                st.info(f"One-hot encoded: {before_cols} columns -> {len(work_df.columns)} columns.")
+            elif auto_encode == "drop":
+                work_df = work_df.drop(columns=current_non_numeric)
+                st.info(f"Dropped {len(current_non_numeric)} categorical columns. {len(work_df.columns)} features remaining.")
+
+        if work_df.shape[1] == 0:
+            st.error("No features remaining after encoding. Please select different features.")
             st.stop()
 
-        X_values = X.values
+        X_values = work_df.values
+        # Store the final feature names (may have changed with one-hot encoding)
+        final_feature_names = work_df.columns.tolist()
 
         if task_type in ("classification", "regression"):
-            y = df[st.session_state["target_column"]].copy()
+            y = df.loc[work_df.index, st.session_state["target_column"]].copy()
             # Encode string targets for classification
             if task_type == "classification" and y.dtype == object:
-                from sklearn.preprocessing import LabelEncoder
                 le = LabelEncoder()
                 y_encoded = le.fit_transform(y)
                 st.session_state["label_encoder"] = le
@@ -239,16 +332,17 @@ if st.button("Prepare Data", type="primary"):
         clear_downstream("split")
         st.session_state["X_train"] = X_train
         st.session_state["X_test"] = X_test
+        st.session_state["feature_columns"] = final_feature_names
         st.session_state["test_size"] = test_size / 100
         st.session_state["random_seed"] = int(random_seed)
 
         st.success(
-            f"Data split complete! Training set: {X_train.shape[0]:,} samples, "
+            f"Data prepared! Training set: {X_train.shape[0]:,} samples, "
             f"Test set: {X_test.shape[0]:,} samples, "
             f"Features: {X_train.shape[1]}."
         )
     except Exception as e:
-        st.error(f"Error during data split: {e}")
+        st.error(f"Error during data preparation: {e}")
 
 # ── Navigation ─────────────────────────────────────────────────────────────
 st.divider()
