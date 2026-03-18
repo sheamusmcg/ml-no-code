@@ -129,10 +129,19 @@ st.caption(
     "Only load pickle files from sources you trust."
 )
 
+# ── Try Your Model ────────────────────────────────────────────────────────
+st.header("Try Your Model on New Data")
+st.write(
+    "Ready to see your model in action? The **Predict** page lets you input new values "
+    "manually or upload a fresh CSV — just like deploying a model in the real world."
+)
+st.page_link("pages/10_predict.py", label="Go to Predict", icon=":material/rocket_launch:")
+
 # ── What's Next ───────────────────────────────────────────────────────────
 st.header("What's Next?")
 st.write(
     "Congratulations on completing the ML pipeline! Here are some ideas for next steps:\n\n"
+    "- **Try your model** — go to the Predict page and test it on new data\n"
     "- **Try different models** — go back to the Training page and experiment with other algorithms\n"
     "- **Tune hyperparameters** — adjust the settings and see how performance changes\n"
     "- **Try different preprocessing** — does scaling help? Does removing features improve results?\n"

@@ -28,6 +28,9 @@ pages = {
         st.Page("pages/08_model_comparison.py", title="Compare Models", icon=":material/compare:"),
         st.Page("pages/09_export_summary.py", title="Export & Summary", icon=":material/download:"),
     ],
+    "Deploy": [
+        st.Page("pages/10_predict.py", title="Predict", icon=":material/rocket_launch:"),
+    ],
 }
 
 page = st.navigation(pages)
