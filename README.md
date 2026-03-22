@@ -1,12 +1,12 @@
-# ML No Code
+# Machine Learning Explainer 
 
-A no-code machine learning teaching tool built with Streamlit and scikit-learn. Walk through the complete ML pipeline — from loading data to training models and making predictions — without writing a single line of code.
+A no-code machine learning teaching tool built with Streamlit and scikit-learn. Walk through the complete ML pipeline, from loading data to training models and making predictions, without writing a single line of code.
 
 Designed for complete beginners. Every step includes plain-English explanations, tooltips, and guided walkthroughs.
 
 ## Live Demo
 
-[Try it on Streamlit Cloud](https://sheamusmcg-ml-no-code.streamlit.app)
+[Try it on Streamlit Cloud](https://ml-explainer.streamlit.app/)
 
 ## Features
 
