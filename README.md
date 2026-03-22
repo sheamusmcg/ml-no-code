@@ -6,7 +6,7 @@ Designed for complete beginners. Every step includes plain-English explanations,
 
 ## Live Demo
 
-[Try it on Streamlit Cloud](https://ml-explainer.streamlit.app/)
+[Try it here](https://ml-explainer.streamlit.app/)
 
 ## Features
 
